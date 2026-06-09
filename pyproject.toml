@@ -1,0 +1,36 @@
+[project]
+name = "epson-keeper"
+version = "0.1.0"
+description = "Epson L416x 自动维护工具 — 每周打印维护页防止喷头堵塞"
+requires-python = ">=3.10"
+
+dependencies = [
+    "zeroconf>=0.130.0",
+    "reportlab>=4.0",
+    "click>=8.0",
+    "pyyaml>=6.0",
+    "pycups>=2.0.0",
+    # epson-print-conf 不在 PyPI，需从 GitHub 安装：
+    #   pip install "epson-print-conf @ git+https://github.com/Ircama/epson_print_conf"
+    # 或通过 install.sh 自动安装
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "ruff>=0.4.0",
+    "pypdf>=3.0",
+]
+
+[project.scripts]
+epson-keeper = "epson_keeper.cli:main"
+
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100

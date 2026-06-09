@@ -66,29 +66,18 @@ epson-keeper/
 
 **策略**：配置 `printer.ip` 手动指定优先；未配置时通过 mDNS 自动发现。不做 SNMP 子网扫描。
 
-```python
-@dataclass
-class DiscoveredPrinter:
-    ip: str                    # 打印机 IP
-    name: str                  # mDNS 服务名（手动 IP 时为 "manual"）
-    model_hint: Optional[str]  # txt record 中的型号提示（可能为 None）
-```
+**数据结构**：`DiscoveredPrinter` 包含三个字段：
+- `ip`（str）：打印机 IP 地址
+- `name`（str）：mDNS 服务名；手动 IP 时为 "manual"
+- `model_hint`（Optional[str]）：txt record 中的型号提示，可能为 None
 
-```
-1. 读取 config.yaml 中的 printer.ip
-2. 若 printer.ip 非空：
-   a. TCP connect 打印机 IP:9100（超时 3 秒）
-   b. 可达 → 返回 DiscoveredPrinter(ip, "manual", None)
-   c. 不可达 → 报错退出（退出码 1），提示检查 IP/网络/电源
-3. 若 printer.ip 为空（自动发现）：
-   a. mDNS 浏览 _ipp._tcp.local.（超时 10 秒）
-   b. 筛选 txt record 中 ty 或 usb_MFG 包含 "EPSON" 的服务
-   c. 匹配 0 台 → 报错退出，提示配置 printer.ip
-   d. 匹配 1 台 → 返回 DiscoveredPrinter(ip, service_name, model_hint)
-   e. 匹配 >1 台 → 报错退出，列出发现的打印机名称/IP，提示配置 printer.ip
-4. 返回后日志输出 DiscoveredPrinter 信息，用于排查
-5. 用 epson_print_conf（SNMP）查询打印机状态（失败不阻塞）
-```
+**发现流程**：
+1. 读取 config.yaml 中的 `printer.ip`
+2. 若 `printer.ip` 非空：TCP connect 打印机 IP:9100（超时 3 秒），可达则返回，不可达则报错退出（退出码 1）
+3. 若 `printer.ip` 为空：mDNS 浏览 `_ipp._tcp.local.`（超时 10 秒），筛选 txt record 中 `ty` 或 `usb_MFG` 包含 "EPSON" 的服务
+4. 匹配 0 台 → 报错退出，提示配置 `printer.ip`
+5. 匹配 1 台 → 返回 `DiscoveredPrinter`
+6. 匹配 >1 台 → 报错退出，列出发现的打印机名称/IP，提示配置 `printer.ip`
 
 **依赖**：`zeroconf`（mDNS 浏览）
 
@@ -98,55 +87,18 @@ class DiscoveredPrinter:
 
 **重要**：状态查询失败 **不能阻塞** `preview` 或 `run`。所有字段为 `Optional`，查询失败时填充 `None`，PDF 中对应位置显示"未知"。
 
-```python
-from dataclasses import dataclass
-from typing import Optional
+**PrinterStatus 数据结构**（全部 Optional，查询失败时为 None）：
 
-@dataclass
-class PrinterStatus:
-    # 元数据（始终有值）
-    query_time: str                       # ISO 8601 含时区
-    printer_ip: str
+| 分组 | 字段 | 类型 | 来源 |
+|------|------|------|------|
+| 元数据 | `query_time`, `printer_ip` | str（始终有值） | 系统 |
+| 设备信息 | `model`, `serial_number`, `firmware_version`, `mac_address`, `printer_head_id`, `first_ti_received` | Optional[str] | `get_serial_number()`, `get_firmware_version()`, `get_printer_head_id()`, `get_snmp_info()["MAC Address"]`, `stats()["stats"]["First TI received time"]` |
+| 打印统计 | `total_print_pages`, `total_print_pass`, `total_scan_count` | Optional[int] | `stats()["stats"]` 子字典 |
+| 墨水更换 | `black/cyan/magenta/yellow_ink_replacements` | Optional[int] | `stats()["ink_replacement_counters"]` |
+| 废墨垫 | `main_waste_ink_pct`, `borderless_waste_ink_pct` | Optional[float] | `stats()["waste_ink_levels"]` |
+| 状态/错误 | `fatal_errors`, `printer_status`, `snmp_info` | Optional[list/dict] | `stats()["last_printer_fatal_errors"]`, `stats()["printer_status"]`, `get_snmp_info()` |
 
-    # 以下全部 Optional，查询失败时为 None
-    model: Optional[str] = None
-    serial_number: Optional[str] = None
-    firmware_version: Optional[str] = None
-    mac_address: Optional[str] = None
-    printer_head_id: Optional[str] = None
-    first_ti_received: Optional[str] = None
-
-    total_print_pages: Optional[int] = None
-    total_print_pass: Optional[int] = None
-    total_scan_count: Optional[int] = None
-
-    black_ink_replacements: Optional[int] = None
-    cyan_ink_replacements: Optional[int] = None
-    magenta_ink_replacements: Optional[int] = None
-    yellow_ink_replacements: Optional[int] = None
-
-    main_waste_ink_pct: Optional[float] = None
-    borderless_waste_ink_pct: Optional[float] = None
-
-    fatal_errors: Optional[list] = None
-    printer_status: Optional[dict] = None
-    snmp_info: Optional[dict] = None
-```
-
-**降级逻辑**：
-
-```python
-def query_printer(ip: str, model: str) -> PrinterStatus:
-    status = PrinterStatus(query_time=now_iso8601(), printer_ip=ip)
-    try:
-        printer = EpsonPrinter(model=model, hostname=ip)
-        status.model = model
-        status.serial_number = printer.get_serial_number()
-        # ... 逐字段 try/except
-    except Exception as e:
-        logger.warning("打印机查询部分失败: %s", e)
-    return status  # 始终返回，不抛异常
-```
+**查询逻辑**：逐字段调用 `epson_print_conf` API，每个字段独立 try/except，单字段失败填 None，不阻塞其他字段。MAC 地址从 `get_snmp_info()` 返回的 SNMP 信息字典中提取。统计信息从 `stats()` 汇总方法的子字典中提取。
 
 ### 4.3 PDF 生成 (`pdf_generator.py`)
 
@@ -161,7 +113,7 @@ def query_printer(ip: str, model: str) -> PrinterStatus:
 #### 第 2 页：打印机状态报告
 
 **设计原则**：
-- 精确时间戳（含时区，格式：`2026-06-09 21:00:00 +08:00`）
+- 精确时间戳（格式：`2026-06-09T21:00:15`）
 - 黑色 + 彩色混合排版，日常黑色消耗多，信息页用彩色文字平衡
 - 字段为 None 时显示"未知"，不隐藏该行
 
@@ -170,13 +122,12 @@ def query_printer(ip: str, model: str) -> PrinterStatus:
 ```
 ┌─────────────────────────────────────┐
 │  ■ Epson Keeper 维护报告            │ ← 标题：深蓝色
-│  生成时间: 2026-06-09 21:00:15      │ ← 灰色小字
-│  +08:00                             │
+│  生成时间: 2026-06-09T21:00:15      │ ← 灰色小字
 ├─────────────────────────────────────┤
 │  设备信息                            │ ← 小节标题：青色
 │  ┌──────────┬──────────────────────┐ │
 │  │ 型号     │ L4160                │ │ ← 标签黑色，值深蓝色
-│  │ 序列号   │ X58B240789           │ │
+│  │ 序列号   │ X000000000           │ │
 │  │ 固件     │ LF23I6               │ │
 │  │ MAC      │ AA:BB:CC:DD:EE:FF    │ │
 │  │ 打印头ID │ 未知                  │ │ ← 查询失败时
@@ -277,57 +228,9 @@ def query_printer(ip: str, model: str) -> PrinterStatus:
 
 `ColorModel`、`print-quality`、`sides` 等选项名称和可选值均由打印机驱动定义。程序先查询 CUPS 打印机能力，再 best-effort 设置。
 
-```python
-import cups
-import logging
+**选项探测**：对每个选项（ColorModel、print-quality、sides、media），从 CUPS 打印机属性中读取 `*-supported` 列表，匹配预设候选值，取第一个匹配项。
 
-logger = logging.getLogger(__name__)
-
-OPTION_PROBE = {
-    "ColorModel":    ["RGB", "Color", "CMYK"],
-    "print-quality": ["4", "5", "3"],
-    "sides":         ["two-sided-long-edge"],
-    "media":         ["A4", "A4 Plain"],
-}
-
-def detect_printer_options(conn, printer_name: str) -> dict:
-    printers = conn.getPrinters()
-    info = printers.get(printer_name)
-    if not info:
-        raise ValueError(f"打印机 {printer_name} 未在 CUPS 中注册")
-
-    supported = {}
-    for opt, candidates in OPTION_PROBE.items():
-        avail = info.get(f"{opt}-supported", [])
-        if isinstance(avail, str):
-            avail = [avail]
-        for c in candidates:
-            if c in avail:
-                supported[opt] = c
-                break
-    return supported
-
-def print_pdf(pdf_path: str, printer_name: str, duplex: bool = True):
-    conn = cups.Connection()
-    supported = detect_printer_options(conn, printer_name)
-    logger.info("探测到的打印选项: %s", supported)
-
-    options = {}
-    for key in ("media", "ColorModel", "print-quality"):
-        if key in supported:
-            options[key] = supported[key]
-
-    actual_duplex = False
-    if duplex and "sides" in supported:
-        options["sides"] = supported["sides"]
-        actual_duplex = True
-    elif duplex:
-        logger.warning("打印机不支持自动双面，降级为单面打印")
-
-    job_id = conn.printFile(printer_name, pdf_path, "epson-keeper", options)
-    logger.info("打印任务已提交: job_id=%s, duplex=%s", job_id, actual_duplex)
-    return job_id
-```
+**打印流程**：设置 media、ColorModel、print-quality 选项；若需要双面且 CUPS 支持 `sides`，则设置 `two-sided-long-edge`；提交 `conn.printFile()`，返回 job_id。
 
 **降级策略**：
 - CUPS 不支持双面 → 2 页分别单面打印（不丢状态页）；L415x 模式只生成 1 页 PDF，自然单面
@@ -336,12 +239,7 @@ def print_pdf(pdf_path: str, printer_name: str, duplex: bool = True):
 
 ### 4.5 安装脚本 (`install.sh`)
 
-**用法**：
-```bash
-./install.sh                    # 自动选择 venv 并安装
-./install.sh --venv ~/myenv     # 使用指定 venv
-./install.sh --dry-run          # 只打印将执行的操作，不实际修改
-```
+**用法**：`./install.sh [--venv PATH] [--dry-run]`
 
 **功能**：
 1. 检测 Python >= 3.10（遍历 python3.12/3.11/3.10/3）
@@ -351,107 +249,11 @@ def print_pdf(pdf_path: str, printer_name: str, duplex: bool = True):
    c. 都没有 → 创建 `~/.local/share/epson-keeper/venv`
    d. 任一候选 venv 验证失败（Python 版本不足或 pip 缺失）→ 跳过，尝试下一个
 3. `pip install -e .` 安装项目
-4. 复制 `config.example.yaml` 到配置目录（若不存在）
-5. 安装 crontab 定时任务（marker block 模式）
+4. `pip install epson-print-conf`（从 GitHub 安装，不在 PyPI）
+5. 复制 `config.example.yaml` 到配置目录（若不存在）
+6. 安装 crontab 定时任务（marker block 模式）
 
-**Crontab marker block**：
-
-```
-# >>> epson-keeper >>>
-0 21 * * 4 /path/to/venv/bin/epson-keeper run >> /path/to/cron.log 2>&1
-# <<< epson-keeper <<<
-```
-
-**安装脚本伪代码**：
-
-```bash
-#!/bin/bash
-set -euo pipefail
-
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-INSTALL_DIR="$HOME/.local/share/epson-keeper"
-CONFIG_DIR="$HOME/.config/epson-keeper"
-CRON_SCHEDULE="0 21 * * 4"
-DRY_RUN=false
-VENV_DIR=""   # --venv 参数或自动选择后填充
-
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --dry-run) DRY_RUN=true; shift ;;
-    --venv)    VENV_DIR="$2"; shift 2 ;;
-    *)         echo "未知参数: $1"; exit 1 ;;
-  esac
-done
-
-# 每个步骤显式执行，dry-run 只打印不执行
-step() {
-  echo ">>> $*"
-  if ! $DRY_RUN; then "$@"; fi
-}
-
-# ── 检测 Python >= 3.10 ──
-PYTHON=""
-for c in python3.12 python3.11 python3.10 python3; do
-  if command -v "$c" &>/dev/null; then
-    ver=$("$c" -c "import sys;print(sys.version_info.minor)")
-    [ "$ver" -ge 10 ] 2>/dev/null && PYTHON="$c" && break
-  fi
-done
-[ -z "$PYTHON" ] && echo "错误: 需要 Python >= 3.10" && exit 1
-
-# ── 选择 venv（优先级：--venv > ~/.venv > ~/venv > 创建新 venv）──
-validate_venv() {
-  local venv="$1"
-  [ -f "$venv/pyvenv.cfg" ] || return 1
-  "$venv/bin/python" -c "import sys; assert sys.version_info >= (3,10)" 2>/dev/null || return 1
-  "$venv/bin/pip" --version &>/dev/null || return 1
-  return 0
-}
-
-if [ -n "$VENV_DIR" ]; then
-  validate_venv "$VENV_DIR" || { echo "错误: $VENV_DIR 不可用（需 Python >= 3.10 + pip）"; exit 1; }
-else
-  for candidate in "$HOME/.venv" "$HOME/venv"; do
-    if validate_venv "$candidate"; then
-      VENV_DIR="$candidate"
-      echo "复用已有 venv: $VENV_DIR"
-      break
-    fi
-  done
-fi
-if [ -z "$VENV_DIR" ]; then
-  VENV_DIR="$INSTALL_DIR/venv"
-  step "$PYTHON" -m venv "$VENV_DIR"
-fi
-
-# ── 安装 ──
-step mkdir -p "$INSTALL_DIR" "$CONFIG_DIR"
-step cp -r "$SCRIPT_DIR/src/" "$INSTALL_DIR/"
-step cp "$SCRIPT_DIR/pyproject.toml" "$INSTALL_DIR/"
-step "$VENV_DIR/bin/pip" install -e "$INSTALL_DIR"
-
-if [ ! -f "$CONFIG_DIR/config.yaml" ]; then
-  step cp "$SCRIPT_DIR/config.example.yaml" "$CONFIG_DIR/config.yaml"
-fi
-
-# ── crontab marker block（保留用户已有条目）──
-CRON_CMD="$CRON_SCHEDULE $VENV_DIR/bin/epson-keeper run >> $INSTALL_DIR/cron.log 2>&1"
-EXISTING=$(crontab -l 2>/dev/null || true)
-CLEANED=$(echo "$EXISTING" | sed '/# >>> epson-keeper >>>/,/# <<< epson-keeper <<</d')
-NEW_CRONTAB=$(printf '%s\n%s\n%s\n%s\n' \
-  "$CLEANED" \
-  "# >>> epson-keeper >>>" \
-  "$CRON_CMD" \
-  "# <<< epson-keeper <<<")
-if $DRY_RUN; then
-  echo "[dry-run] crontab 内容:"
-  echo "$NEW_CRONTAB"
-else
-  echo "$NEW_CRONTAB" | crontab -
-fi
-
-echo "安装完成！配置: $CONFIG_DIR/config.yaml | 定时: 每周四 21:00"
-```
+**Crontab marker block**：使用 `# >>> epson-keeper >>>` / `# <<< epson-keeper <<<` 标记块包裹定时任务行，安装时先删除已有标记块再插入，保留用户其他 crontab 条目。
 
 > **后续增强**：`--uninstall` 选项（移除 crontab block + venv）。
 
@@ -517,24 +319,35 @@ version = "0.1.0"
 requires-python = ">=3.10"
 
 dependencies = [
-    "epson-print-conf>=1.0.0",
-    "pysnmp>=6.0.0",
     "zeroconf>=0.130.0",
     "reportlab>=4.0",
     "pycups>=2.0.0",
     "click>=8.0",
     "pyyaml>=6.0",
+    # epson-print-conf 不在 PyPI，需从 GitHub 安装（见下文）
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0",
     "ruff>=0.4.0",
+    "pypdf>=3.0",
 ]
 
 [project.scripts]
 epson-keeper = "epson_keeper.cli:main"
 ```
+
+### epson-print-conf 安装
+
+`epson-print-conf` 是核心依赖（SNMP 状态查询），**不在 PyPI**，需从 GitHub 安装：
+
+- **仓库**：https://github.com/Ircama/epson_print_conf
+- **安装命令**：
+  ```bash
+  pip install "epson-print-conf @ git+https://github.com/Ircama/epson_print_conf"
+  ```
+- `install.sh` 会自动执行此安装
 
 > `Pillow` 在 MVP 中不需要（色条用 reportlab Canvas 直接绘制）。后续添加照片功能时再引入。
 
@@ -561,83 +374,17 @@ epson-keeper = "epson_keeper.cli:main"
 
 ### 10.2 Mock 策略
 
-```python
-# zeroconf mock（mDNS 发现）
-@pytest.fixture
-def mock_zeroconf(monkeypatch):
-    from zeroconf import ServiceInfo
-    fake_info = ServiceInfo(
-        "_ipp._tcp.local.",
-        "EPSON L4160._ipp._tcp.local.",
-        addresses=[b"\xc0\xa8\x01\x64"],  # 192.168.1.100
-        properties={"ty": "EPSON L4160 Series"},
-    )
-    class FakeZeroconf:
-        def __init__(self): pass
-        def close(self): pass
-    class FakeBrowser:
-        def __init__(self, zc, stype, handlers, **kw):
-            # 立即触发一个已发现服务
-            handlers[0](FakeZeroconf(), stype, fake_info.name)
-    monkeypatch.setattr("zeroconf.Zeroconf", FakeZeroconf)
-    monkeypatch.setattr("zeroconf.ServiceBrowser", FakeBrowser)
-
-# epson_print_conf mock
-@pytest.fixture
-def mock_printer(monkeypatch):
-    class FakePrinter:
-        def stats(self):
-            return {"serial_number": "X58B240789", ...}
-        def get_serial_number(self):
-            return "X58B240789"
-    monkeypatch.setattr(
-        "epson_print_conf.EpsonPrinter", lambda **kw: FakePrinter()
-    )
-
-# CUPS mock
-@pytest.fixture
-def mock_cups(monkeypatch):
-    class FakeConn:
-        def getPrinters(self):
-            return {"EPSON_L4160": {
-                "sides-supported": ["two-sided-long-edge"],
-                "ColorModel-supported": ["RGB"],
-            }}
-        def printFile(self, *args):
-            return 42
-    monkeypatch.setattr("cups.Connection", FakeConn)
-```
+- **zeroconf**：mock `Zeroconf` 和 `ServiceBrowser`，在 handler 回调中立即触发一个已发现的 EPSON 服务
+- **epson_print_conf**：mock `EpsonPrinter` 类，返回预设的 stats/serial/firmware 数据
+- **cups**：mock `cups.Connection`，返回预设的打印机属性和 printFile 返回值
+- **conftest.py**：在模块级别 mock `epson_print_conf` 和 `cups` 到 `sys.modules`，避免测试环境 ImportError
 
 ### 10.3 PDF 结构测试
 
-```python
-def test_pdf_has_two_pages(tmp_path):
-    pdf_path = generate_pdf(fake_status(), include_status_page=True)
-    reader = PdfReader(pdf_path)
-    assert len(reader.pages) == 2
-
-def test_pdf_single_page(tmp_path):
-    pdf_path = generate_pdf(fake_status(), include_status_page=False)
-    reader = PdfReader(pdf_path)
-    assert len(reader.pages) == 1
-
-def test_status_page_contains_serial(tmp_path):
-    pdf_path = generate_pdf(fake_status(), include_status_page=True)
-    text = extract_text(pdf_path, page=1)  # 第 2 页是状态页
-    assert "X58B240789" in text
-
-def test_status_page_contains_timestamp(tmp_path):
-    pdf_path = generate_pdf(fake_status(), include_status_page=True)
-    text = extract_text(pdf_path, page=1)
-    assert re.search(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", text)
-
-def test_none_fields_show_unknown(tmp_path):
-    """preview 模式使用空 PrinterStatus，所有字段应显示'未知'。"""
-    status = PrinterStatus(query_time=now(), printer_ip="")
-    pdf_path = generate_pdf(status, include_status_page=True)
-    text = extract_text(pdf_path, page=1)
-    assert "未知" in text
-```
+- 生成 2 页 PDF（`include_status_page=True`），验证页数为 2
+- 生成 1 页 PDF（`include_status_page=False`），验证页数为 1
+- 提取状态页文本，验证包含序列号、时间戳
+- 使用空 `PrinterStatus`（preview 模式），验证所有 None 字段显示"未知"
 
 ### 10.4 手工验收
 

@@ -1,0 +1,11 @@
+printer:
+  ip: ""                        # 可选，留空则自动发现（mDNS）；手动指定 IP 作为 fallback
+  model: "L4160"                # 必填，用于 epson_print_conf（如 L4150, L4160）
+  cups_name: "EPSON_L4160_Series"  # 必填，CUPS 队列名称（运行 `lpstat -p` 查看）
+
+schedule:
+  cron: "0 21 * * 4"            # 每周四 21:00
+
+logging:
+  level: "INFO"
+  file: ""                      # 留空则只输出到 stderr
