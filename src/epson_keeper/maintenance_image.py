@@ -204,9 +204,9 @@ def draw_background_dots(
     _draw_dot_matrix(
         cv, 0, 0, width, height,
         density=0.01,
-        dot_min=1.0 * MM,
-        dot_max=2.0 * MM,
-        spacing_min=12 * MM,
-        spacing_max=20 * MM,
-        pct_range=(0.06, 0.18),
+        dot_min=1.5 * MM,
+        dot_max=3.0 * MM,
+        spacing_min=10 * MM,
+        spacing_max=16 * MM,
+        pct_range=(0.10, 0.30),
     )

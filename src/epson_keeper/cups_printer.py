@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 def print_pdf(pdf_path: str, printer_name: str, duplex: bool = True) -> int:
     """提交 PDF 到 CUPS 打印，返回 job_id。"""
-    cmd = ["lp", "-d", printer_name]
+    cmd = ["lp", "-d", printer_name, "-o", "media=A4"]
     if duplex:
         cmd += ["-o", "sides=two-sided-long-edge"]
     cmd.append(pdf_path)
