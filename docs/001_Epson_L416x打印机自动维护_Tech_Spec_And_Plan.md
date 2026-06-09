@@ -1,6 +1,6 @@
 # 001 - Epson Keeper 技术规格与开发计划
 
-> 版本: 2.3 | 日期: 2026-06-09 | 状态: Draft
+> 版本: 2.4 | 日期: 2026-06-09 | 状态: Draft
 >
 > **MVP 范围**：mDNS 自动发现单台 Epson 打印机（手动 IP 作为 fallback），核心维护打印。
 
@@ -20,9 +20,11 @@ Epson Keeper 是一个自动化维护工具，针对 Epson L415x/L416x 系列墨
 | 系列 | 型号 | 自动双面 | 维护策略 |
 |------|------|----------|----------|
 | L415x | L4150, L4152, L4154, L4156, L4158 | 否 | 只打印维护页（无状态页），避免浪费纸 |
-| L416x | L4160, L4162, L4164, L4166, L4168 | 是 | 双面打印：正面维护页 + 背面状态页 |
+| L416x | L4160, L4162, L4164, L4166, L4168 | 是 * | 双面打印：第 1 页维护页，第 2 页状态页 |
 
-> **型号差异**：L415x 无自动双面硬件，为节省纸张只打印单面维护页（色条+波浪线+点阵图），不打印状态报告。L416x 全系列支持自动双面，正面维护页、背面状态报告。`epson_print_conf` 将 L415x 视为 L4160 的配置别名（EEPROM 参数相同）。
+> \* L416x 标称支持自动双面，实际以 CUPS `sides-supported` 探测结果为准。若 CUPS 报告不支持双面，则 2 页分别单面打印（不丢状态页）。
+>
+> **型号差异**：L415x 无自动双面硬件，为节省纸张只打印单面维护页（色条+波浪线+点阵图），不打印状态报告。`epson_print_conf` 将 L415x 视为 L4160 的配置别名（EEPROM 参数相同）。
 
 ### 2.2 运行环境
 
@@ -45,6 +47,7 @@ epson-keeper/
 │   └── maintenance_image.py    # 维护色条/波浪线/点阵绘制
 ├── tests/
 │   ├── test_config.py
+│   ├── test_discovery.py
 │   ├── test_printer_info.py
 │   ├── test_pdf_generator.py
 │   ├── test_maintenance_image.py
@@ -63,19 +66,28 @@ epson-keeper/
 
 **策略**：配置 `printer.ip` 手动指定优先；未配置时通过 mDNS 自动发现。不做 SNMP 子网扫描。
 
+```python
+@dataclass
+class DiscoveredPrinter:
+    ip: str                    # 打印机 IP
+    name: str                  # mDNS 服务名（手动 IP 时为 "manual"）
+    model_hint: Optional[str]  # txt record 中的型号提示（可能为 None）
+```
+
 ```
 1. 读取 config.yaml 中的 printer.ip
 2. 若 printer.ip 非空：
    a. TCP connect 打印机 IP:9100（超时 3 秒）
-   b. 可达 → 使用该 IP
+   b. 可达 → 返回 DiscoveredPrinter(ip, "manual", None)
    c. 不可达 → 报错退出（退出码 1），提示检查 IP/网络/电源
 3. 若 printer.ip 为空（自动发现）：
    a. mDNS 浏览 _ipp._tcp.local.（超时 10 秒）
    b. 筛选 txt record 中 ty 或 usb_MFG 包含 "EPSON" 的服务
    c. 匹配 0 台 → 报错退出，提示配置 printer.ip
-   d. 匹配 1 台 → 使用该 IP（从 service address 解析）
-   e. 匹配 >1 台 → 报错退出，列出发现的打印机，提示配置 printer.ip 选择
-4. IP 确定后，用 epson_print_conf（SNMP）查询打印机状态（失败不阻塞）
+   d. 匹配 1 台 → 返回 DiscoveredPrinter(ip, service_name, model_hint)
+   e. 匹配 >1 台 → 报错退出，列出发现的打印机名称/IP，提示配置 printer.ip
+4. 返回后日志输出 DiscoveredPrinter 信息，用于排查
+5. 用 epson_print_conf（SNMP）查询打印机状态（失败不阻塞）
 ```
 
 **依赖**：`zeroconf`（mDNS 浏览）
@@ -140,11 +152,13 @@ def query_printer(ip: str, model: str) -> PrinterStatus:
 
 使用 `reportlab` 生成 A4 PDF。
 
-**页面策略**：
-- L416x（支持双面）：生成 2 页 PDF，第 1 页状态报告、第 2 页维护色条+波浪线+点阵
-- L415x（不支持双面）：生成 **1 页 PDF**，仅维护色条+波浪线+点阵（不浪费纸打印状态页）
+**页面策略**（由 `generate_pdf(status, include_status_page)` 控制）：
+- `include_status_page=True`（L416x 或 preview 默认）：2 页 PDF — 第 1 页维护色条+波浪线+点阵，第 2 页状态报告
+- `include_status_page=False`（L415x 或 `--single-page`）：1 页 PDF — 仅维护色条+波浪线+点阵
 
-#### 第 1 页：打印机状态报告
+> 第 1 页始终是维护页，第 2 页（如有）是状态页。双面打印时维护页在正面，状态页在背面。
+
+#### 第 2 页：打印机状态报告
 
 **设计原则**：
 - 精确时间戳（含时区，格式：`2026-06-09 21:00:00 +08:00`）
@@ -206,7 +220,7 @@ def query_printer(ip: str, model: str) -> PrinterStatus:
 - 分隔线：灰色 `#e0e0e0`
 - 页脚：灰色 `#9e9e9e`
 
-#### 第 2 页：维护色条 + 波浪线 + 点阵图
+#### 第 1 页：维护色条 + 波浪线 + 点阵图
 
 **设计原则**：覆盖四色喷嘴，全页利用（无大面积留白），低墨量。reportlab Canvas 直接绘制，不依赖 Pillow。
 
@@ -316,7 +330,7 @@ def print_pdf(pdf_path: str, printer_name: str, duplex: bool = True):
 ```
 
 **降级策略**：
-- 打印机不支持双面（L415x）→ **只生成 1 页维护页**（不打印状态页，避免浪费纸）
+- CUPS 不支持双面 → 2 页分别单面打印（不丢状态页）；L415x 模式只生成 1 页 PDF，自然单面
 - 驱动不报告 ColorModel → 跳过（大多数驱动默认彩色）
 - 打印机离线 → 报错退出，保留 PDF 供手动打印
 
@@ -333,8 +347,9 @@ def print_pdf(pdf_path: str, printer_name: str, duplex: bool = True):
 1. 检测 Python >= 3.10（遍历 python3.12/3.11/3.10/3）
 2. **选择 venv**（优先级从高到低）：
    a. `--venv PATH` 参数指定
-   b. 已有 `~/.venv` 或 `~/venv`（检查 `pyvenv.cfg` 存在且 Python 版本 >= 3.10）
+   b. 已有 `~/.venv` 或 `~/venv`（验证 `pyvenv.cfg` 存在、Python >= 3.10、pip 可用）
    c. 都没有 → 创建 `~/.local/share/epson-keeper/venv`
+   d. 任一候选 venv 验证失败（Python 版本不足或 pip 缺失）→ 跳过，尝试下一个
 3. `pip install -e .` 安装项目
 4. 复制 `config.example.yaml` 到配置目录（若不存在）
 5. 安装 crontab 定时任务（marker block 模式）
@@ -385,9 +400,19 @@ done
 [ -z "$PYTHON" ] && echo "错误: 需要 Python >= 3.10" && exit 1
 
 # ── 选择 venv（优先级：--venv > ~/.venv > ~/venv > 创建新 venv）──
-if [ -z "$VENV_DIR" ]; then
+validate_venv() {
+  local venv="$1"
+  [ -f "$venv/pyvenv.cfg" ] || return 1
+  "$venv/bin/python" -c "import sys; assert sys.version_info >= (3,10)" 2>/dev/null || return 1
+  "$venv/bin/pip" --version &>/dev/null || return 1
+  return 0
+}
+
+if [ -n "$VENV_DIR" ]; then
+  validate_venv "$VENV_DIR" || { echo "错误: $VENV_DIR 不可用（需 Python >= 3.10 + pip）"; exit 1; }
+else
   for candidate in "$HOME/.venv" "$HOME/venv"; do
-    if [ -f "$candidate/pyvenv.cfg" ]; then
+    if validate_venv "$candidate"; then
       VENV_DIR="$candidate"
       echo "复用已有 venv: $VENV_DIR"
       break
@@ -452,8 +477,9 @@ logging:
 
 ```bash
 # 预览 PDF（生成到当前目录，不打印，不连接打印机）← 首先验证此命令
-# 使用空 PrinterStatus 生成，所有字段显示"未知"，验证 PDF 结构和排版
+# 默认生成 L416x 双面版 2 页（维护页 + 状态页），状态字段全部显示"未知"
 epson-keeper preview
+epson-keeper preview --single-page  # L415x 单面版 1 页（仅维护页）
 
 # 仅查询打印机状态（输出到终端）
 epson-keeper status
@@ -466,7 +492,7 @@ epson-keeper run --yes          # 跳过确认（cron 定时任务使用）
 epson-keeper install
 ```
 
-**交付验证顺序**：`preview` → `status` → 真实 `run`（需用户确认）。
+**交付验证顺序**：`preview` → `preview --single-page` → `status` → 真实 `run`（需用户确认）。
 
 ## 7. 错误处理
 
@@ -528,7 +554,7 @@ epson-keeper = "epson_keeper.cli:main"
 
 | 层级 | 范围 | Mock 对象 |
 |------|------|-----------|
-| 单元测试 | 各模块独立逻辑 | epson_print_conf / CUPS |
+| 单元测试 | 各模块独立逻辑 | epson_print_conf / CUPS / zeroconf |
 | 集成测试 | CLI 端到端（mock 外部 I/O） | 网络 / 打印机 |
 | PDF 结构测试 | 页数、内容、时间戳 | 无 |
 | 手工验收 | 真实打印机端到端 | 无 |
@@ -536,6 +562,26 @@ epson-keeper = "epson_keeper.cli:main"
 ### 10.2 Mock 策略
 
 ```python
+# zeroconf mock（mDNS 发现）
+@pytest.fixture
+def mock_zeroconf(monkeypatch):
+    from zeroconf import ServiceInfo
+    fake_info = ServiceInfo(
+        "_ipp._tcp.local.",
+        "EPSON L4160._ipp._tcp.local.",
+        addresses=[b"\xc0\xa8\x01\x64"],  # 192.168.1.100
+        properties={"ty": "EPSON L4160 Series"},
+    )
+    class FakeZeroconf:
+        def __init__(self): pass
+        def close(self): pass
+    class FakeBrowser:
+        def __init__(self, zc, stype, handlers, **kw):
+            # 立即触发一个已发现服务
+            handlers[0](FakeZeroconf(), stype, fake_info.name)
+    monkeypatch.setattr("zeroconf.Zeroconf", FakeZeroconf)
+    monkeypatch.setattr("zeroconf.ServiceBrowser", FakeBrowser)
+
 # epson_print_conf mock
 @pytest.fixture
 def mock_printer(monkeypatch):
@@ -566,25 +612,30 @@ def mock_cups(monkeypatch):
 
 ```python
 def test_pdf_has_two_pages(tmp_path):
-    pdf_path = generate_pdf(fake_status())
+    pdf_path = generate_pdf(fake_status(), include_status_page=True)
     reader = PdfReader(pdf_path)
     assert len(reader.pages) == 2
 
+def test_pdf_single_page(tmp_path):
+    pdf_path = generate_pdf(fake_status(), include_status_page=False)
+    reader = PdfReader(pdf_path)
+    assert len(reader.pages) == 1
+
 def test_status_page_contains_serial(tmp_path):
-    pdf_path = generate_pdf(fake_status())
-    text = extract_text(pdf_path, page=0)
+    pdf_path = generate_pdf(fake_status(), include_status_page=True)
+    text = extract_text(pdf_path, page=1)  # 第 2 页是状态页
     assert "X58B240789" in text
 
 def test_status_page_contains_timestamp(tmp_path):
-    pdf_path = generate_pdf(fake_status())
-    text = extract_text(pdf_path, page=0)
+    pdf_path = generate_pdf(fake_status(), include_status_page=True)
+    text = extract_text(pdf_path, page=1)
     assert re.search(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", text)
 
 def test_none_fields_show_unknown(tmp_path):
     """preview 模式使用空 PrinterStatus，所有字段应显示'未知'。"""
-    status = PrinterStatus(query_time=now(), printer_ip="")  # 空状态
-    pdf_path = generate_pdf(status)
-    text = extract_text(pdf_path, page=0)
+    status = PrinterStatus(query_time=now(), printer_ip="")
+    pdf_path = generate_pdf(status, include_status_page=True)
+    text = extract_text(pdf_path, page=1)
     assert "未知" in text
 ```
 
@@ -594,13 +645,14 @@ def test_none_fields_show_unknown(tmp_path):
 
 | # | 测试项 | 验收标准 |
 |---|--------|----------|
-| H1 | `epson-keeper preview`（无打印机） | 生成 A4 PDF，状态页字段显示"未知"，维护页色条+波浪线+点阵完整 |
-| H2 | mDNS 自动发现（不配置 printer.ip） | 自动找到局域网 Epson 打印机，输出 IP |
-| H3 | `epson-keeper status` | 输出打印机状态信息 |
-| H4 | `epson-keeper run` L416x（双面） | 双面 1 张：正面维护页，背面状态页 |
-| H5 | `epson-keeper run` L415x（单面） | 单面 1 张：仅维护页（无状态页） |
-| H6 | `install.sh --venv PATH --dry-run` | 输出操作预览，使用指定 venv |
-| H7 | `install.sh` | venv 选择/创建正确，crontab marker block 可见 |
+| H1 | `epson-keeper preview`（默认 2 页） | 第 1 页维护页完整，第 2 页状态字段全部显示"未知" |
+| H2 | `epson-keeper preview --single-page` | 生成 1 页 PDF，仅维护页 |
+| H3 | mDNS 自动发现（不配置 printer.ip） | 输出 `DiscoveredPrinter`（IP + 名称），日志可见 |
+| H4 | `epson-keeper status` | 输出打印机状态信息 |
+| H5 | `epson-keeper run` L416x | 第 1 页维护页（正面），第 2 页状态页（背面） |
+| H6 | `epson-keeper run` L415x | 单面 1 张：仅维护页 |
+| H7 | `install.sh --venv PATH --dry-run` | 输出操作预览，使用指定 venv |
+| H8 | `install.sh` | venv 选择/创建正确，crontab marker block 可见 |
 
 ---
 
@@ -643,12 +695,13 @@ M4: install 跑通（venv + crontab）
 #### Task 1.3: 打印机自动发现
 
 - [ ] `src/epson_keeper/discovery.py`
+- [ ] `DiscoveredPrinter` dataclass（ip, name, model_hint）
 - [ ] mDNS 浏览 `_ipp._tcp.local.`，筛选 EPSON 设备（txt `ty` 或 `usb_MFG`）
-- [ ] `discover_printer(config_ip: str | None) -> str`：手动 IP 优先，mDNS 兜底
-- [ ] 0 台 / >1 台 → 报错退出并给出清晰提示
+- [ ] `discover_printer(config_ip: str | None) -> DiscoveredPrinter`：手动 IP 优先，mDNS 兜底
+- [ ] 0 台 / >1 台 → 报错退出并给出清晰提示（列出打印机名称）
 - [ ] 单元测试（mock zeroconf）
 
-**输出**：`discover_printer()` 返回打印机 IP
+**输出**：`discover_printer()` 返回 `DiscoveredPrinter`
 **依赖**：Task 1.2
 
 ### 阶段 2：核心模块
@@ -682,14 +735,14 @@ M4: install 跑通（venv + crontab）
 - [ ] 第 2 页：调用 `draw_maintenance_page()`
 - [ ] PDF 结构测试
 
-**输出**：`generate_pdf(status) -> str`
+**输出**：`generate_pdf(status, include_status_page: bool = True) -> str`
 **依赖**：Task 2.1, Task 2.2
 
 #### Task 2.4: CUPS 打印
 
 - [ ] `src/epson_keeper/cups_printer.py`
 - [ ] `detect_printer_options()` best-effort 探测
-- [ ] 双面检测：支持 → 2 页双面；不支持 → **只打印维护页**（不打印状态页）
+- [ ] CUPS 双面支持则设 sides；不支持则 2 页分别单面打印（页数策略由 pdf_generator 决定）
 - [ ] 单元测试（mock cups.Connection）
 
 **输出**：`print_pdf(path, name, duplex) -> job_id`
@@ -699,7 +752,7 @@ M4: install 跑通（venv + crontab）
 
 #### Task 3.1: CLI 完整集成
 
-- [ ] `cli.py` 实现：`preview` / `status` / `run` / `install`
+- [ ] `cli.py` 实现：`preview [--single-page]` / `status` / `run` / `install`
 - [ ] `run` 命令打印前需用户确认（`--yes` 跳过）
 - [ ] 日志配置
 - [ ] 错误处理：每阶段失败的降级策略
