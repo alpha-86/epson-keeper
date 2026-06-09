@@ -120,11 +120,10 @@ def _v(value, suffix: str = "") -> str:
 
 
 @main.command()
-@click.option("--yes", "-y", is_flag=True, help="跳过确认（cron 定时任务使用）")
-def run(yes: bool):
+def run():
     """执行完整维护（查询 → 生成 PDF → 打印）"""
     from epson_keeper.config import get
-    from epson_keeper.discovery import discover_printer
+    from epson_keeper.discovery import discover_printer, save_printer_ip
     from epson_keeper.printer_info import query_printer
     from epson_keeper.pdf_generator import generate_pdf
     from epson_keeper.cups_printer import print_pdf as cups_print
@@ -149,6 +148,10 @@ def run(yes: bool):
     click.echo(f"发现打印机: {printer.name} ({printer.ip})")
     logger.info("打印机已发现: %s (%s)", printer.name, printer.ip)
 
+    # mDNS 发现后保存 IP，下次直接用，避免重复扫描
+    if printer.name != "manual" and printer.ip:
+        save_printer_ip(printer.ip)
+
     # 2. 查询状态
     logger.info("[阶段 2/4] 查询打印机状态...")
     info = query_printer(printer.ip, model)
@@ -160,9 +163,6 @@ def run(yes: bool):
     pdf_path = generate_pdf(info, include_status_page=include_status)
     click.echo(f"PDF 已生成: {pdf_path}")
     logger.info("PDF 生成完成: %s", pdf_path)
-
-    if not yes:
-        click.confirm("确认执行打印?", abort=True)
 
     # 4. 打印
     logger.info("[阶段 4/4] 提交打印任务...")

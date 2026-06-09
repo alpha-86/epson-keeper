@@ -132,3 +132,16 @@ def discover_printer(config_ip: Optional[str] = None) -> DiscoveredPrinter:
 
     logger.info("未配置 printer.ip，尝试 mDNS 自动发现...")
     return _mdns_discover()
+
+
+def save_printer_ip(ip: str):
+    """将发现的打印机 IP 保存到 config.yaml，避免下次再做 mDNS 扫描。"""
+    from epson_keeper.config import CONFIG_PATH, load_config
+
+    import yaml
+
+    cfg = load_config()
+    cfg.setdefault("printer", {})["ip"] = ip
+    with open(CONFIG_PATH, "w") as f:
+        yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True)
+    logger.info("已保存打印机 IP 到配置: %s → %s", ip, CONFIG_PATH)

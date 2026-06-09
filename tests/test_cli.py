@@ -84,12 +84,13 @@ class TestStatus:
 
 
 class TestRun:
+    @patch("epson_keeper.discovery.save_printer_ip")
     @patch("epson_keeper.cups_printer.print_pdf")
     @patch("epson_keeper.pdf_generator.generate_pdf")
     @patch("epson_keeper.printer_info.query_printer")
     @patch("epson_keeper.discovery.discover_printer")
-    def test_run_with_yes(self, mock_discover, mock_query, mock_gen, mock_print,
-                          tmp_path, monkeypatch):
+    def test_run_success(self, mock_discover, mock_query, mock_gen, mock_print,
+                         mock_save_ip, tmp_path, monkeypatch):
         cfg = _write_config(tmp_path)
         monkeypatch.setattr("epson_keeper.config.CONFIG_PATH", cfg)
 
@@ -99,9 +100,10 @@ class TestRun:
         mock_print.return_value = 42
 
         runner = CliRunner()
-        result = runner.invoke(main, ["run", "--yes"])
+        result = runner.invoke(main, ["run"])
         assert result.exit_code == 0, result.output + str(result.exception)
         assert "job_id=42" in result.output
+        mock_save_ip.assert_called_once_with("10.0.0.1")
 
 
 class TestVersion:
