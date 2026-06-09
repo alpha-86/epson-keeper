@@ -14,7 +14,7 @@ class TestPrintPdf:
         job_id = print_pdf("/tmp/test.pdf", "EPSON_L4160", duplex=True)
         assert job_id == 42
         cmd = mock_run.call_args[0][0]
-        assert cmd == ["lp", "-d", "EPSON_L4160", "-o", "media=A4", "-o", "sides=two-sided-long-edge", "/tmp/test.pdf"]
+        assert cmd == ["lp", "-d", "EPSON_L4160", "-o", "media=A4", "-o", "Duplex=DuplexNoTumble", "/tmp/test.pdf"]
 
     @patch("epson_keeper.cups_printer.subprocess.run")
     def test_print_without_duplex(self, mock_run):
