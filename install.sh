@@ -4,8 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 INSTALL_DIR="$HOME/.local/share/epson-keeper"
 CONFIG_DIR="$HOME/.config/epson-keeper"
-# 北京时间 21:50 = UTC 13:50（服务器时区为 UTC）
-CRON_SCHEDULE="50 13 * * 3"
+CRON_SCHEDULE="50 21 * * 3"
 DRY_RUN=false
 VENV_DIR=""
 
