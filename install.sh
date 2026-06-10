@@ -4,7 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 INSTALL_DIR="$HOME/.local/share/epson-keeper"
 CONFIG_DIR="$HOME/.config/epson-keeper"
-CRON_SCHEDULE="40 21 * * 3"
+# 北京时间 21:50 = UTC 13:50（服务器时区为 UTC）
+CRON_SCHEDULE="50 13 * * 3"
 DRY_RUN=false
 VENV_DIR=""
 
@@ -95,5 +96,5 @@ fi
 echo ""
 echo "安装完成！"
 echo "  配置文件: $CONFIG_DIR/config.yaml"
-echo "  定时任务: $CRON_SCHEDULE（每周三 21:40）"
+echo "  定时任务: 每周三 21:50 (北京时间)"
 echo "  运行日志: $INSTALL_DIR/cron.log"

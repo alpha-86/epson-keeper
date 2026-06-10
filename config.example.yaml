@@ -4,7 +4,7 @@ printer:
   cups_name: "EPSON_L4160_Series"  # 必填，CUPS 队列名称（运行 `lpstat -p` 查看）
 
 schedule:
-  cron: "40 21 * * 3"            # 每周三 21:40
+  cron: "50 13 * * 3"            # 每周三 21:50 北京时间（服务器 UTC）
 
 logging:
   level: "INFO"
