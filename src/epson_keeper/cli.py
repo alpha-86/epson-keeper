@@ -16,13 +16,6 @@ def _setup_logging(level: str = "INFO", log_file: str = ""):
     """配置日志：始终写 stderr + /tmp/epson-keeper/epson-keeper.log。"""
     ensure_output_dir()
     fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
-    # 日志时间使用北京时间（UTC+8）
-    import time as _time
-    from datetime import timezone, timedelta
-    _tz_cn = timezone(timedelta(hours=8))
-    fmt.converter = lambda *args: _time.localtime(
-        _time.time() + _tz_cn.utcoffset(None).total_seconds()
-    )
 
     root = logging.getLogger()
     # 清除已有 handlers，避免 basicConfig no-op

@@ -2,7 +2,7 @@
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone, timedelta
+from datetime import datetime
 from typing import Any, Optional
 
 from epson_print_conf import EpsonPrinter
@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class PrinterStatus:
     # 元数据（始终有值）
-    query_time: str  # ISO 8601 含时区
+    query_time: str  # ISO 8601
     printer_ip: str
 
     # 以下全部 Optional，查询失败时为 None
@@ -41,12 +41,9 @@ class PrinterStatus:
     snmp_info: Optional[dict] = field(default=None)
 
 
-_TZ_CN = timezone(timedelta(hours=8))
-
-
 def now_iso8601() -> str:
-    """返回当前时间的字符串（中国时区，精确到秒，不含时区偏移）。"""
-    return datetime.now(_TZ_CN).strftime("%Y-%m-%dT%H:%M:%S")
+    """返回当前时间的 ISO 8601 字符串（精确到秒）。"""
+    return datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
 
 
 def _safe_call(fn, *args, **kwargs) -> Any:

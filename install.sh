@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 INSTALL_DIR="$HOME/.local/share/epson-keeper"
 CONFIG_DIR="$HOME/.config/epson-keeper"
-CRON_SCHEDULE="50 21 * * 3"
+CRON_SCHEDULE="55 21 * * 3"
 DRY_RUN=false
 VENV_DIR=""
 
