@@ -15,7 +15,7 @@ PAGE_H = 297 * MM  # 841.89
 # 布局参数
 TOP_MARGIN = 15 * MM
 BAR_WIDTH = 185 * MM
-BAR_HEIGHT = 24 * MM
+BAR_HEIGHT = 28 * MM
 WAVE_AREA_HEIGHT = 16 * MM
 DOT_AREA_HEIGHT = 80 * MM
 COLOR_SPACING = 6 * MM  # 每组色条+波浪线之间的间距
@@ -47,7 +47,7 @@ def _draw_gradient_bar(
     width: float,
     height: float,
     cmyk: tuple,
-    start_pct: float = 0.1,
+    start_pct: float = 0.3,
     end_pct: float = 1.0,
     steps: int = 60,
     direction: str = "lr",
@@ -85,7 +85,7 @@ def _draw_sine_waves(
     line_width: float = 0.9,
     amplitude: float = 2.0 * MM,
     periods: float = 5.0,
-    start_pct: float = 0.1,
+    start_pct: float = 0.2,
     end_pct: float = 1.0,
 ):
     """绘制多条 sin 波浪线，从浅到深渐变。"""
