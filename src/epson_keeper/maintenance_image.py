@@ -16,9 +16,9 @@ PAGE_H = 297 * MM  # 841.89
 TOP_MARGIN = 15 * MM
 BAR_WIDTH = 185 * MM
 BAR_HEIGHT = 28 * MM
-WAVE_AREA_HEIGHT = 16 * MM
+WAVE_AREA_HEIGHT = 10 * MM
 DOT_AREA_HEIGHT = 80 * MM
-COLOR_SPACING = 6 * MM  # 每组色条+波浪线之间的间距
+COLOR_SPACING = 4 * MM  # 每组色条+波浪线之间的间距
 
 # CMYK 颜色（纯色，用于渐变）
 CMYK_COLORS = {
