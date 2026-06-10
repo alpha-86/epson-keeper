@@ -67,8 +67,8 @@ step mkdir -p "$INSTALL_DIR" "$CONFIG_DIR"
 step cp -r "$SCRIPT_DIR/src/" "$INSTALL_DIR/"
 step cp "$SCRIPT_DIR/pyproject.toml" "$INSTALL_DIR/"
 step "$VENV_DIR/bin/pip" install -e "$INSTALL_DIR"
-# epson-print-conf 不在 PyPI，从 GitHub 安装
-step "$VENV_DIR/bin/pip" install "epson-print-conf @ git+https://github.com/Ircama/epson_print_conf"
+# epson_print_conf (PyPI: epsonprinter)
+step "$VENV_DIR/bin/pip" install epsonprinter
 
 if [ ! -f "$CONFIG_DIR/config.yaml" ]; then
   step cp "$SCRIPT_DIR/config.example.yaml" "$CONFIG_DIR/config.yaml"
